@@ -49,54 +49,15 @@ class DownstreamDataModule(pl.LightningDataModule):
         else:
             self.val_dataset = Dataset(phase=phase_val, config=self.config)
 
-
     def train_dataloader(self):
-
-        if self.config["num_gpus"]:
-            num_workers = self.config["num_threads"] // self.config["num_gpus"]
-        else:
-            num_workers = self.config["num_threads"]
-
-        if self.config["dataset"].lower() == "nuscenes":
-            default_collate_pair_fn = minkunet_collate_pair_fn
-        elif self.config["dataset"].lower() == "kitti":
-            default_collate_pair_fn = kitti_collate_pair_fn
-        elif self.config["dataset"].lower() == "scannet":
-            default_collate_pair_fn = scannet_collate_pair_fn
-
+        # construct the training dataloader: this function is automatically called
+        # by lightning
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=num_workers,
-            collate_fn=default_collate_pair_fn,
-            pin_memory=True,
-            drop_last=True,
-            worker_init_fn=lambda id: np.random.seed(
-                torch.initial_seed() // 2 ** 32 + id
-            ),
-        )
-
-    def val_dataloader(self):
-
-        if self.config["num_gpus"]:
-            num_workers = self.config["num_threads"] // self.config["num_gpus"]
-        else:
-            num_workers = self.config["num_threads"]
-
-        if self.config["dataset"].lower() == "nuscenes":
-            default_collate_pair_fn = minkunet_collate_pair_fn
-        elif self.config["dataset"].lower() == "kitti":
-            default_collate_pair_fn = kitti_collate_pair_fn
-        elif self.config["dataset"].lower() == "scannet":
-            default_collate_pair_fn = scannet_collate_pair_fn
-
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            collate_fn=default_collate_pair_fn,
+            num_workers=self.num_workers,
+            collate_fn=custom_collate_fn,
             pin_memory=True,
             drop_last=False,
             worker_init_fn=lambda id: np.random.seed(
@@ -104,36 +65,18 @@ class DownstreamDataModule(pl.LightningDataModule):
             ),
         )
 
-
-    #
-    # def train_dataloader(self):
-    #     # construct the training dataloader: this function is automatically called
-    #     # by lightning
-    #     return DataLoader(
-    #         self.train_dataset,
-    #         batch_size=self.batch_size,
-    #         shuffle=True,
-    #         num_workers=self.num_workers,
-    #         collate_fn=custom_collate_fn,
-    #         pin_memory=True,
-    #         drop_last=False,
-    #         worker_init_fn=lambda id: np.random.seed(
-    #             torch.initial_seed() // 2 ** 32 + id
-    #         ),
-    #     )
-    #
-    # def val_dataloader(self):
-    #     # construct the validation dataloader: this function is automatically called
-    #     # by lightning
-    #     return DataLoader(
-    #         self.val_dataset,
-    #         batch_size=self.batch_size,
-    #         shuffle=False,
-    #         num_workers=self.num_workers,
-    #         collate_fn=custom_collate_fn,
-    #         pin_memory=True,
-    #         drop_last=False,
-    #         worker_init_fn=lambda id: np.random.seed(
-    #             torch.initial_seed() // 2 ** 32 + id
-    #         ),
-    #     )
+    def val_dataloader(self):
+        # construct the validation dataloader: this function is automatically called
+        # by lightning
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=custom_collate_fn,
+            pin_memory=True,
+            drop_last=False,
+            worker_init_fn=lambda id: np.random.seed(
+                torch.initial_seed() // 2 ** 32 + id
+            ),
+        )
