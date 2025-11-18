@@ -1,15 +1,13 @@
 import os
 import torch
 import numpy as np
+import MinkowskiEngine as ME  # ← 添加这个导入！
 from torch.utils.data import Dataset
 from nuscenes.nuscenes import NuScenes
-# from MinkowskiEngine.utils import sparse_quantize
 from utils.transforms import make_transforms_clouds
 from nuscenes.utils.splits import create_splits_scenes
 from nuscenes.utils.data_classes import LidarPointCloud
-# from torchsparse.utils.quantize import sparse_quantize
-# from petrel_client.client import Client
-import json
+
 # parametrizing set, to try out different parameters
 CUSTOM_SPLIT = [
     "scene-0008", "scene-0009", "scene-0019", "scene-0029", "scene-0032", "scene-0042",
@@ -37,49 +35,35 @@ def custom_collate_fn(list_data):
     Custom collate function adapted for creating batches with MinkowskiEngine.
     """
     input = list(zip(*list_data))
-    # whether the dataset returns labels
     labelized = len(input) == 7
-    # evaluation_labels are per points, labels are per voxels
+    
     if labelized:
         xyz, coords, feats, labels, evaluation_labels, inverse_indexes, lidar_name = input
     else:
         xyz, coords, feats, inverse_indexes = input
 
-    # for names
-    # name_list = []
-
-    # print(feats[0].size())
-
     coords_batch, len_batch = [], []
 
-    # create a tensor of coordinates of the 3D points
-    # note that in ME, batche index and point indexes are collated in the same dimension
     for batch_id, coo in enumerate(coords):
         N = coords[batch_id].shape[0]
         coords_batch.append(
             torch.cat((coo, torch.ones(N, 1, dtype=torch.int32) * batch_id), 1)
         )
         len_batch.append(N)
-    # for batch_id, coo in enumerate(coords):
-    #     N = coords[batch_id].shape[0]
-    #     coords_batch.append(
-    #         torch.cat((torch.ones(N, 1, dtype=torch.int32) * batch_id, coo), 1)
-    #     )
-    #     len_batch.append(N)
 
-    # Collate all lists on their first dimension
     coords_batch = torch.cat(coords_batch, 0).int()
     feats_batch = torch.cat(feats, 0).float()
+    
     if labelized:
         labels_batch = torch.cat(labels, 0).long()
         return {
-            "pc": xyz,  # point cloud
-            "sinput_C": coords_batch,  # discrete coordinates (ME)
-            "sinput_F": feats_batch,  # point features (N, 3)
-            "len_batch": len_batch,  # length of each batch
-            "labels": labels_batch,  # labels for each (voxelized) point
-            "evaluation_labels": evaluation_labels,  # labels for each point
-            "inverse_indexes": inverse_indexes,  # labels for each point
+            "pc": xyz,
+            "sinput_C": coords_batch,
+            "sinput_F": feats_batch,
+            "len_batch": len_batch,
+            "labels": labels_batch,
+            "evaluation_labels": evaluation_labels,
+            "inverse_indexes": inverse_indexes,
             "lidar_name": lidar_name
         }
     else:
@@ -103,101 +87,57 @@ class NuScenesDataset(Dataset):
         self.transforms = transforms
         self.voxel_size = config["voxel_size"]
         self.cylinder = config["cylindrical_coordinates"]
+        
+        # 从配置中读取数据根目录
+        self.dataroot = config.get("dataRoot_nuscenes", "/data/zy/OpenPCDet/data/nuscenes/v1.0-trainval")
 
+        # 加载 NuScenes 数据集
         if phase != "test":
             if cached_nuscenes is not None:
                 self.nusc = cached_nuscenes
             else:
                 self.nusc = NuScenes(
-                    version="v1.0-trainval", dataroot="s3://liuyouquan/nuScenes/", verbose=False
+                    version="v1.0-trainval", 
+                    dataroot=self.dataroot, 
+                    verbose=False
                 )
         else:
             self.nusc = NuScenes(
-                version="v1.0-test", dataroot="s3://liuyouquan/nuScenes/", verbose=False
+                version="v1.0-test", 
+                dataroot=self.dataroot, 
+                verbose=False
             )
 
-        self.list_tokens = []
+        # 确定场景划分（和预训练完全一样）
+        if phase in ("train", "val", "test"):
+            phase_scenes = create_splits_scenes()[phase]
+        elif phase == "parametrizing":
+            phase_scenes = list(
+                set(create_splits_scenes()["train"]) - set(CUSTOM_SPLIT)
+            )
+        elif phase == "verifying":
+            phase_scenes = CUSTOM_SPLIT
+        else:
+            raise ValueError(f"Unknown phase: {phase}")
 
-        # a skip ratio can be used to reduce the dataset size
-        # and accelerate experiments
+        # Skip ratio
         if phase in ("val", "verifying"):
             skip_ratio = 1
         else:
-            try:
-                skip_ratio = config["dataset_skip_step"]
-            except KeyError:
-                skip_ratio = 1
+            skip_ratio = config.get("dataset_skip_step", 1)
 
+        # 构建数据列表（和预训练完全一样的逻辑）
+        self.list_keyframes = []
+        skip_counter = 0
+        
+        for scene_idx in range(len(self.nusc.scene)):
+            scene = self.nusc.scene[scene_idx]
+            if scene["name"] in phase_scenes:
+                skip_counter += 1
+                if skip_counter % skip_ratio == 0:
+                    self.create_list_of_scans(scene)
 
-        self.dataroot = "s3://liuyouquan/nuScenes"  #todo
-
-        # self.client = Client('~/.petreloss.conf')
-
-
-        # if phase in ("train", "val", "test"):
-        #     phase_scenes = create_splits_scenes()[phase]
-        # elif phase == "parametrizing":
-        #     phase_scenes = list(
-        #         set(create_splits_scenes()["train"]) - set(CUSTOM_SPLIT)
-        #     )
-        # elif phase == "verifying":
-        #     phase_scenes = CUSTOM_SPLIT
-        if phase == "train":
-            with open('./list_keyframes_train.json', 'r') as f:
-                self.list_keyframes = json.load(f)
-
-            f1 = open('./save_dict_train.json', 'r')
-            content = f1.read()
-            self.frames_corrs_info = json.loads(content)
-            f1.close()
-        if phase == "val":
-            with open('./list_keyframes_val.json', 'r') as f:
-                self.list_keyframes = json.load(f)
-
-            f1 = open('./save_dict_val.json', 'r')
-            content = f1.read()
-            self.frames_corrs_info = json.loads(content)
-            f1.close()
-        if phase == "test":
-            with open('./list_keyframes_test.json', 'r') as f:
-                self.list_keyframes = json.load(f)
-
-            f1 = open('./save_dict_test.json', 'r')
-            content = f1.read()
-            self.frames_corrs_info = json.loads(content)
-            f1.close()
-
-        if phase == "parametrizing":
-            with open('./list_keyframes_parametrizing.json', 'r') as f:
-                self.list_keyframes = json.load(f)
-
-            f1 = open('./save_dict_parametrizing.json', 'r')
-            content = f1.read()
-            self.frames_corrs_info = json.loads(content)
-            f1.close()
-        elif phase == "verifying":
-            with open('./list_keyframes_verifying.json', 'r') as f:
-                self.list_keyframes = json.load(f)
-
-            f1 = open('./save_dict_verifying.json', 'r')
-            content = f1.read()
-            self.frames_corrs_info = json.loads(content)
-            f1.close()
-
-        print("before: ", len(self.list_keyframes))
-        self.list_keyframes = self.list_keyframes[::skip_ratio]
-        print("after: ", len(self.list_keyframes))
-
-
-
-        # skip_counter = 0
-        # create a list of all keyframe scenes
-        # for scene_idx in range(len(self.nusc.scene)):
-        #     scene = self.nusc.scene[scene_idx]
-        #     if scene["name"] in phase_scenes:
-        #         skip_counter += 1
-        #         if skip_counter % skip_ratio == 0:
-        #             self.create_list_of_tokens(scene)
+        print(f"{phase}: {len(self.list_keyframes)} keyframes")
 
         # labels' names lookup table
         self.eval_labels = {
@@ -206,75 +146,66 @@ class NuScenesDataset(Dataset):
             23: 10, 24: 11, 25: 12, 26: 13, 27: 14, 28: 15, 29: 0, 30: 16, 31: 0,
         }
 
-    # def create_list_of_tokens(self, scene):
-    #     # Get first in the scene
-    #     current_sample_token = scene["first_sample_token"]
-    #
-    #     # Loop to get all successive keyframes
-    #     while current_sample_token != "":
-    #         current_sample = self.nusc.get("sample", current_sample_token)
-    #         next_sample_token = current_sample["next"]
-    #         self.list_tokens.append(current_sample["data"]["LIDAR_TOP"])
-    #         current_sample_token = next_sample_token
+    def create_list_of_scans(self, scene):
+        #从预训练代码迁移过来的方法
+        current_sample_token = scene["first_sample_token"]
+        
+        while current_sample_token != "":
+            current_sample = self.nusc.get("sample", current_sample_token)
+            self.list_keyframes.append(current_sample["data"])
+            current_sample_token = current_sample["next"]
 
     def __len__(self):
         return len(self.list_keyframes)
 
     def __getitem__(self, idx):
-        lidar_token = self.list_keyframes[idx]
-
-        key_ = lidar_token["LIDAR_TOP"]
-        pcl_path = self.dataroot + self.frames_corrs_info[key_]["lidar_name"].replace("samples", "")
-        # pc_original = LidarPointCloud.from_file(pcl_path)
-        # pc_ref = pc_original.points
-
-
-
-        # pointsensor = self.nusc.get("sample_data", lidar_token)
-        # pcl_path = os.path.join(self.nusc.dataroot, pointsensor["filename"])
+        # 获取数据字典（包含所有传感器的 token）
+        data_dict = self.list_keyframes[idx]
+        lidar_token = data_dict["LIDAR_TOP"]
+        
+        # 获取点云数据
+        pointsensor = self.nusc.get("sample_data", lidar_token)
+        pcl_path = os.path.join(self.nusc.dataroot, pointsensor["filename"])
         points = LidarPointCloud.from_file(pcl_path).points.T
-        # get the points (4th coordinate is the point intensity)
         pc = points[:, :3]
+        
+        # 获取标签
         if self.labels:
-            # lidarseg_labels_filename = os.path.join(
-            #     self.nusc.dataroot, self.nusc.get("lidarseg", lidar_token)["filename"]
-            # )
-            lidarseg_labels_filename = self.dataroot + "/" + self.frames_corrs_info[key_]["labels_name"]
+            lidarseg_data = self.nusc.get("lidarseg", lidar_token)
+            lidarseg_labels_filename = os.path.join(
+                self.nusc.dataroot, lidarseg_data["filename"]
+            )
             points_labels = np.fromfile(lidarseg_labels_filename, dtype=np.uint8)
-            # points_labels = np.frombuffer(self.client.get(lidarseg_labels_filename, update_cache=True), dtype=np.uint8)
 
         pc = torch.tensor(pc)
 
-        # apply the transforms (augmentation)
+        # 数据增强
         if self.transforms:
             pc = self.transforms(pc)
 
+        # 体素化
         if self.cylinder:
-            # Transform to cylinder coordinate and scale for given voxel size
             x, y, z = pc.T
             rho = torch.sqrt(x ** 2 + y ** 2) / self.voxel_size
-            # corresponds to a split each 1°
             phi = torch.atan2(y, x) * 180 / np.pi
             z = z / self.voxel_size
             coords_aug = torch.cat((rho[:, None], phi[:, None], z[:, None]), 1)
         else:
             coords_aug = pc / self.voxel_size
 
-        # Voxelization for spvcnn
-        # discrete_coords, indexes, inverse_indexes = sparse_quantize(
-        #     coords_aug.numpy(), return_index=True, return_inverse=True
-        # )
-        # discrete_coords, indexes, inverse_indexes = torch.from_numpy(discrete_coords), torch.from_numpy(indexes), torch.from_numpy(inverse_indexes)
-
+        # 稀疏量化（修复了 bug：使用 coords_aug 而不是 coords）
         discrete_coords, indexes, inverse_indexes = ME.utils.sparse_quantize(
-            coords.contiguous(), return_index=True, return_inverse=True
+            coords_aug.contiguous(), return_index=True, return_inverse=True
         )
 
-
-        # use those voxels features
-        unique_feats = torch.tensor(points[indexes][:, 3:])
-
-        # print(((unique_feats) != 0).sum() / unique_feats.shape[0])
+        # 提取唯一体素的特征（强度值）
+        # 关键修复：确保特征维度正确
+        unique_feats = points[indexes][:, 3:]  # 提取强度特征（第4列开始）
+        
+        # 确保特征是 2D 张量 [N, C]，即使只有一个通道也要保持形状
+        if unique_feats.ndim == 1:
+            unique_feats = unique_feats[:, None]  # [N] -> [N, 1]
+        unique_feats = torch.from_numpy(unique_feats).float()
 
         if self.labels:
             points_labels = torch.tensor(
@@ -282,10 +213,10 @@ class NuScenesDataset(Dataset):
                 dtype=torch.int32,
             )
             unique_labels = points_labels[indexes]
-
-        lidar_name = self.frames_corrs_info[key_]["labels_name"]
-
-        if self.labels:
+            
+            # 使用实际的文件名
+            lidar_name = pointsensor["filename"]
+            
             return (
                 pc,
                 discrete_coords,
@@ -302,20 +233,16 @@ class NuScenesDataset(Dataset):
 def make_data_loader(config, phase, num_threads=0):
     """
     Create the data loader for a given phase and a number of threads.
-    This function is not used with pytorch lightning, but is used when evaluating.
     """
-    # select the desired transformations
     if phase == "train":
         transforms = make_transforms_clouds(config)
     else:
         transforms = None
 
-    # instantiate the dataset
     dset = NuScenesDataset(phase=phase, transforms=transforms, config=config)
     collate_fn = custom_collate_fn
     batch_size = config["batch_size"] // config["num_gpus"]
 
-    # create the loader
     loader = torch.utils.data.DataLoader(
         dset,
         batch_size=batch_size,
