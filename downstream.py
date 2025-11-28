@@ -1,8 +1,8 @@
 import os
 import gc
 import argparse
-import MinkowskiEngine as ME
 import pytorch_lightning as pl
+import MinkowskiEngine as ME
 from downstream.evaluate import evaluate
 from utils.read_config import generate_config
 from downstream.model_builder import make_model
@@ -20,13 +20,13 @@ def main():
     """
     parser = argparse.ArgumentParser(description="arg parser")
     parser.add_argument(
-        "--cfg_file", type=str, default="config/semseg_nuscenes.yaml", help="specify the config for training"
+        "--cfg_file", type=str, default="config/clip2scene_nuscenes_label_free.yaml", help="specify the config for training"
     )
     parser.add_argument(
         "--resume_path", type=str, default=None, help="provide a path to resume an incomplete training"
     )
     parser.add_argument(
-        "--pretraining_path", type=str, default=None, help="provide a path to pre-trained weights"
+        "--pretraining_path", type=str, default="output/model.pt", help="provide a path to pre-trained weights"
     )
     args = parser.parse_args()
     config = generate_config(args.cfg_file)
@@ -41,8 +41,14 @@ def main():
         )
     dm = DownstreamDataModule(config)
     model = make_model(config, config["pretraining_path"])
+    # spvcnn 不需要特殊的 SyncBatchNorm 转换
     if config["num_gpus"] > 1:
-        model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(model)
+        if config["model_points"] == "minkunet":
+            model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(model)
+        else:
+            model = model
+            # model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            
     module = LightningDownstream(model, config)
     path = os.path.join(config["working_dir"], config["datetime"])
     trainer = pl.Trainer(
