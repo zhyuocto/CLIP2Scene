@@ -46,9 +46,14 @@ def make_model(config, load_path=None):
     assert not config[
         "normalize_features"
     ], "You shouldn't normalize features for the downstream task"
+    
     # model = MinkUNet(1, config["model_n_out"], config)
     # model = SPVCNN(1, config["model_n_out"], config)
-    model = MinkUNet(3, config["model_n_out"], config)
+    # model = MinkUNet(3, config["model_n_out"], config)
+    if config["model_points"] == "spvcnn":
+        model = SPVCNN(1, config["model_n_out"], config)
+    elif config["model_points"] == "minkunet":
+        model = MinkUNet(1, config["model_n_out"], config)
 
     if load_path:
         print("Training with pretrained model")
