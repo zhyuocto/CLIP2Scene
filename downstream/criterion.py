@@ -228,8 +228,8 @@ class unknown_aware_infoNCE(nn.Module):
         seen_index = ((labels != self.ignore_index) & (labels != -200))
         unseen_index = labels == -200
 
-        import pdb
-        pdb.set_trace()
+        # import pdb
+        # pdb.set_trace()
 
         loss1 = self.crossentropy(probas[seen_index], labels[seen_index])
         loss2 = self.pseudo_supervised(probas[unseen_index])
