@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader
 from utils.transforms import make_transforms_clouds
 from downstream.dataloader_kitti import SemanticKITTIDataset
-from downstream.dataloader_nuscenes import NuScenesDataset, custom_collate_fn
+from downstream.dataloader_nuscenes import NuScenesDataset, minkunet_custom_collate_fn, spvcnn_custom_collate_fn
 from downstream.dataloader_scannet import scannet_Dataset, scannet_collate_pair_fn
 
 class DownstreamDataModule(pl.LightningDataModule):
@@ -49,15 +49,60 @@ class DownstreamDataModule(pl.LightningDataModule):
         else:
             self.val_dataset = Dataset(phase=phase_val, config=self.config)
 
+
     def train_dataloader(self):
-        # construct the training dataloader: this function is automatically called
-        # by lightning
+
+        if self.config["num_gpus"]:
+            num_workers = self.config["num_threads"] // self.config["num_gpus"]
+        else:
+            num_workers = self.config["num_threads"]
+
+        if self.config["dataset"].lower() == "nuscenes":
+            if self.config["model_point"] == "spvcnn":
+                default_collate_pair_fn = spvcnn_custom_collate_fn
+            else :
+                default_collate_pair_fn = minkunet_custom_collate_fn
+        elif self.config["dataset"].lower() == "kitti":
+            default_collate_pair_fn = kitti_collate_pair_fn
+        elif self.config["dataset"].lower() == "scannet":
+            default_collate_pair_fn = scannet_collate_pair_fn
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.num_workers,
-            collate_fn=custom_collate_fn,
+            num_workers=num_workers,
+            collate_fn=default_collate_pair_fn,
+            pin_memory=True,
+            drop_last=True,
+            worker_init_fn=lambda id: np.random.seed(
+                torch.initial_seed() // 2 ** 32 + id
+            ),
+        )
+
+    def val_dataloader(self):
+
+        if self.config["num_gpus"]:
+            num_workers = self.config["num_threads"] // self.config["num_gpus"]
+        else:
+            num_workers = self.config["num_threads"]
+
+        if self.config["dataset"].lower() == "nuscenes":
+            if self.config["model_point"] == "spvcnn":
+                default_collate_pair_fn = spvcnn_custom_collate_fn
+            else :
+                default_collate_pair_fn = minkunet_custom_collate_fn
+        elif self.config["dataset"].lower() == "kitti":
+            default_collate_pair_fn = kitti_collate_pair_fn
+        elif self.config["dataset"].lower() == "scannet":
+            default_collate_pair_fn = scannet_collate_pair_fn
+
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=default_collate_pair_fn,
             pin_memory=True,
             drop_last=False,
             worker_init_fn=lambda id: np.random.seed(
@@ -65,18 +110,3 @@ class DownstreamDataModule(pl.LightningDataModule):
             ),
         )
 
-    def val_dataloader(self):
-        # construct the validation dataloader: this function is automatically called
-        # by lightning
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            collate_fn=custom_collate_fn,
-            pin_memory=True,
-            drop_last=False,
-            worker_init_fn=lambda id: np.random.seed(
-                torch.initial_seed() // 2 ** 32 + id
-            ),
-        )
