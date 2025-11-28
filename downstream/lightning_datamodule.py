@@ -58,7 +58,7 @@ class DownstreamDataModule(pl.LightningDataModule):
             num_workers = self.config["num_threads"]
 
         if self.config["dataset"].lower() == "nuscenes":
-            if self.config["model_point"] == "spvcnn":
+            if self.config["model_points"] == "spvcnn":
                 default_collate_pair_fn = spvcnn_custom_collate_fn
             else :
                 default_collate_pair_fn = minkunet_custom_collate_fn
@@ -88,7 +88,7 @@ class DownstreamDataModule(pl.LightningDataModule):
             num_workers = self.config["num_threads"]
 
         if self.config["dataset"].lower() == "nuscenes":
-            if self.config["model_point"] == "spvcnn":
+            if self.config["model_points"] == "spvcnn":
                 default_collate_pair_fn = spvcnn_custom_collate_fn
             else :
                 default_collate_pair_fn = minkunet_custom_collate_fn
