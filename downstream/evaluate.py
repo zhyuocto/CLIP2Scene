@@ -12,7 +12,6 @@ CLASSES_NUSCENES = [
     "bicycle",
     "bus",
     "car",
-    "car",
     "construction_vehicle",
     "motorcycle",
     "pedestrian",
@@ -85,11 +84,11 @@ def evaluate(model, dataloader, config):
         for batch in tqdm(dataloader):
             # lidar_names = batch["lidar_name"]
 
-            sparse_input = SparseTensor(batch["sinput_F"].float(), batch["sinput_C"].int(), device=0)
+            # sparse_input = SparseTensor(batch["sinput_F"].float(), batch["sinput_C"].int(), device=0)
             # print(sparse_input, model)
-            output_points = model(sparse_input)
+            # output_points = model(sparse_input)
 
-            if config["model_point"]=="spvcnn":
+            if config["model_points"]=="spvcnn":
                 sparse_input = torch_SparseTensor(batch["sinput_F"], batch["sinput_C"])
                 output_points = model(sparse_input.to(0))
             else:
