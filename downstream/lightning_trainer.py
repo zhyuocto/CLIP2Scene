@@ -116,7 +116,7 @@ class LightningDownstream(pl.LightningModule):
         else:
             self.model.train()
 
-        if self._config["model_point"] == 'spvcnn':
+        if self._config["model_points"] == 'spvcnn':
             sparse_input = torch_SparseTensor(batch["sinput_F"], batch["sinput_C"])
         else:
             sparse_input = mink_SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
@@ -146,7 +146,7 @@ class LightningDownstream(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        if self._config["model_point"] == 'spvcnn':
+        if self._config["model_points"] == 'spvcnn':
             sparse_input = torch_SparseTensor(batch["sinput_F"], batch["sinput_C"])
         else:
             sparse_input = mink_SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
