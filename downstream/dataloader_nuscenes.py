@@ -3,10 +3,12 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 from nuscenes.nuscenes import NuScenes
-from MinkowskiEngine.utils import sparse_quantize
 from utils.transforms import make_transforms_clouds
 from nuscenes.utils.splits import create_splits_scenes
 from nuscenes.utils.data_classes import LidarPointCloud
+
+from MinkowskiEngine.utils import sparse_quantize as mink_sparse_quantize
+from torchsparse.utils.quantize import sparse_quantize as torch_sparse_quantize
 
 
 # parametrizing set, to try out different parameters
@@ -31,16 +33,70 @@ CUSTOM_SPLIT = [
 ]
 
 
-def custom_collate_fn(list_data):
+def spvcnn_custom_collate_fn(list_data):
+    """
+    Custom collate function adapted for creating batches with torchsparse/spvcnn.
+    """
+    input = list(zip(*list_data))
+    # whether the dataset returns labels
+    labelized = len(input) == 7
+    # evaluation_labels are per points, labels are per voxels
+    if labelized:
+        xyz, coords, feats, labels, evaluation_labels, inverse_indexes, lidar_name = input
+    else:
+        xyz, coords, feats, inverse_indexes = input
+
+    # for names
+    # name_list = []
+
+    # print(feats[0].size())
+
+    coords_batch, len_batch = [], []
+
+    # create a tensor of coordinates of the 3D points
+    # TorchSparse / SPVCNN坐标顺序 coords = (x, y, z, batch_id)  # batch_id 在最后
+    for batch_id, coo in enumerate(coords):
+        N = coords[batch_id].shape[0]
+        coords_batch.append(
+            torch.cat((coo, torch.ones(N, 1, dtype=torch.int32) * batch_id), 1)
+        )
+        len_batch.append(N)
+
+    # Collate all lists on their first dimension
+    coords_batch = torch.cat(coords_batch, 0).int()
+    feats_batch = torch.cat(feats, 0).float()
+    if labelized:
+        labels_batch = torch.cat(labels, 0).long()
+        return {
+            "pc": xyz,  # point cloud
+            "sinput_C": coords_batch,  # discrete coordinates (TS)
+            "sinput_F": feats_batch,  # point features (N, 3)
+            "len_batch": len_batch,  # length of each batch
+            "labels": labels_batch,  # labels for each (voxelized) point
+            "evaluation_labels": evaluation_labels,  # labels for each point
+            "inverse_indexes": inverse_indexes,  # labels for each point
+            "lidar_name": lidar_name
+        }
+    else:
+        return {
+            "pc": xyz,
+            "sinput_C": coords_batch,
+            "sinput_F": feats_batch,
+            "len_batch": len_batch,
+            "inverse_indexes": inverse_indexes,
+        }
+
+
+def minkunet_custom_collate_fn(list_data):
     """
     Custom collate function adapted for creating batches with MinkowskiEngine.
     """
     input = list(zip(*list_data))
     # whether the dataset returns labels
-    labelized = len(input) == 6
+    labelized = len(input) == 7
     # evaluation_labels are per points, labels are per voxels
     if labelized:
-        xyz, coords, feats, labels, evaluation_labels, inverse_indexes = input
+        xyz, coords, feats, labels, evaluation_labels, inverse_indexes, lidar_name = input
     else:
         xyz, coords, feats, inverse_indexes = input
 
@@ -48,6 +104,7 @@ def custom_collate_fn(list_data):
 
     # create a tensor of coordinates of the 3D points
     # note that in ME, batche index and point indexes are collated in the same dimension
+    # MinkowskiEngine / MinkUNet coords = (batch_id, x, y, z)  # batch_id 在最前
     for batch_id, coo in enumerate(coords):
         N = coords[batch_id].shape[0]
         coords_batch.append(
@@ -68,6 +125,7 @@ def custom_collate_fn(list_data):
             "labels": labels_batch,  # labels for each (voxelized) point
             "evaluation_labels": evaluation_labels,  # labels for each point
             "inverse_indexes": inverse_indexes,  # labels for each point
+            "lidar_name": lidar_name
         }
     else:
         return {
@@ -182,16 +240,24 @@ class NuScenesDataset(Dataset):
         else:
             coords_aug = pc / self.voxel_size
 
-        # Voxelization
-        discrete_coords, indexes, inverse_indexes = sparse_quantize(
-            coords_aug, return_index=True, return_inverse=True
-        )
+        
+        
+        # Voxelization for spvcnn and minkunet
+        if config["model_point"] == "spvcnn":
+            discrete_coords, indexes, inverse_indexes = torch_sparse_quantize(
+                coords_aug.numpy(), return_index=True, return_inverse=True
+            )
+            discrete_coords, indexes, inverse_indexes = torch.from_numpy(discrete_coords), torch.from_numpy(
+                indexes), torch.from_numpy(inverse_indexes)
 
+        else:
+            discrete_coords, indexes, inverse_indexes = mink_sparse_quantize(
+                coords_aug, return_index=True, return_inverse=True
+            )
+        
+        
         # use those voxels features
-        # unique_feats = torch.tensor(points[indexes][:, 3:])
-        unique_feats = torch.tensor(points[indexes][:, 3:4])
-        # print(unique_feats.shape)
-
+        unique_feats = torch.tensor(points[indexes][:, 3:])
 
         if self.labels:
             points_labels = torch.tensor(
