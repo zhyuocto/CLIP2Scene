@@ -2,8 +2,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from copy import deepcopy
-from MinkowskiEngine import SparseTensor
-# from torchsparse import SparseTensor
+from MinkowskiEngine import SparseTensor as mink_SparseTensor
+from torchsparse import SparseTensor as torch_SparseTensor
 from utils.metrics import compute_IoU
 
 
@@ -11,6 +11,7 @@ CLASSES_NUSCENES = [
     "barrier",
     "bicycle",
     "bus",
+    "car",
     "car",
     "construction_vehicle",
     "motorcycle",
@@ -82,12 +83,20 @@ def evaluate(model, dataloader, config):
         full_predictions = []
         ground_truth = []
         for batch in tqdm(dataloader):
-            lidar_names = batch["lidar_name"]
+            # lidar_names = batch["lidar_name"]
 
             sparse_input = SparseTensor(batch["sinput_F"].float(), batch["sinput_C"].int(), device=0)
             # print(sparse_input, model)
             output_points = model(sparse_input)
 
+            if config["model_point"]=="spvcnn":
+                sparse_input = torch_SparseTensor(batch["sinput_F"], batch["sinput_C"])
+                output_points = model(sparse_input.to(0))
+            else:
+                sparse_input = mink_SparseTensor(batch["sinput_F"].float(), batch["sinput_C"].int(), device=0)
+                # print(sparse_input, model)
+                output_points = model(sparse_input)
+                
             # for spvcnn
             # sparse_input = SparseTensor(batch["sinput_F"], batch["sinput_C"])
             # output_points = model(sparse_input.to(0))
