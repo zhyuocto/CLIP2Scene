@@ -2,12 +2,13 @@ import os
 import torch
 import torch.optim as optim
 import pytorch_lightning as pl
-from MinkowskiEngine import SparseTensor
-# from torchsparse import SparseTensor
+
 from downstream.criterion import DownstreamLoss, unknown_aware_infoNCE
 from pytorch_lightning.utilities import rank_zero_only
 from utils.metrics import confusion_matrix, compute_IoU_from_cmatrix
-import MinkowskiEngine as ME
+
+from MinkowskiEngine import SparseTensor as mink_SparseTensor
+from torchsparse import SparseTensor as torch_SparseTensor
 
 class LightningDownstream(pl.LightningModule):
     def __init__(self, model, config):
@@ -115,7 +116,12 @@ class LightningDownstream(pl.LightningModule):
         else:
             self.model.train()
 
-        sparse_input = ME.SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
+        if self._config["model_point"] == 'spvcnn':
+            sparse_input = torch_SparseTensor(batch["sinput_F"], batch["sinput_C"])
+        else:
+            sparse_input = mink_SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
+
+        # sparse_input = ME.SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
         # sparse_input = SparseTensor(batch["sinput_F"], batch["sinput_C"])
         output_points = self.model(sparse_input)
 
@@ -140,8 +146,13 @@ class LightningDownstream(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
+        if self._config["model_point"] == 'spvcnn':
+            sparse_input = torch_SparseTensor(batch["sinput_F"], batch["sinput_C"])
+        else:
+            sparse_input = mink_SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
+
         # sparse_input = SparseTensor(batch["sinput_F"], batch["sinput_C"])
-        sparse_input = ME.SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
+        # sparse_input = ME.SparseTensor(batch["sinput_F"].float(), coordinates=batch["sinput_C"].int())
         output_points = self.model(sparse_input)
 
         loss = self.criterion(output_points, batch["labels"])
