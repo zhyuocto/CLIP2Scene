@@ -144,6 +144,7 @@ class NuScenesDataset(Dataset):
 
     def __init__(self, phase, config, transforms=None, cached_nuscenes=None):
         self.phase = phase
+        self.config = config
         self.labels = self.phase != "test"
         self.transforms = transforms
         self.voxel_size = config["voxel_size"]
@@ -243,7 +244,7 @@ class NuScenesDataset(Dataset):
         
         
         # Voxelization for spvcnn and minkunet
-        if config["model_point"] == "spvcnn":
+        if self.config["model_points"] == "spvcnn":
             discrete_coords, indexes, inverse_indexes = torch_sparse_quantize(
                 coords_aug.numpy(), return_index=True, return_inverse=True
             )
@@ -292,7 +293,10 @@ def make_data_loader(config, phase, num_threads=0):
 
     # instantiate the dataset
     dset = NuScenesDataset(phase=phase, transforms=transforms, config=config)
-    collate_fn = custom_collate_fn
+    if config["model_points"] == "spvcnn":
+        collate_fn = spvcnn_custom_collate_fn
+    else:
+        collate_fn = minkunet_custom_collate_fn
     batch_size = config["batch_size"] // config["num_gpus"]
 
     # create the loader
