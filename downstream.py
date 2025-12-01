@@ -2,7 +2,6 @@ import os
 import gc
 import argparse
 import pytorch_lightning as pl
-import MinkowskiEngine as ME
 from downstream.evaluate import evaluate
 from utils.read_config import generate_config
 from downstream.model_builder import make_model
@@ -20,7 +19,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description="arg parser")
     parser.add_argument(
-        "--cfg_file", type=str, default="config/clip2scene_nuscenes_label_free.yaml", help="specify the config for training"
+        "--cfg_file", type=str, default="config/nuscenes/spvcnn_zero_shot.yaml", help="specify the config for training"
     )
     parser.add_argument(
         "--resume_path", type=str, default=None, help="provide a path to resume an incomplete training"
@@ -41,32 +40,37 @@ def main():
         )
     dm = DownstreamDataModule(config)
     model = make_model(config, config["pretraining_path"])
-    # spvcnn 不需要特殊的 SyncBatchNorm 转换
+    
     if config["num_gpus"] > 1:
         if config["model_points"] == "minkunet":
+            import MinkowskiEngine as ME
             model = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(model)
         else:
             model = model
             # model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
             
     module = LightningDownstream(model, config)
-    path = os.path.join(config["working_dir"], config["datetime"])
-    trainer = pl.Trainer(
-        gpus=config["num_gpus"],
-        accelerator="ddp",
-        default_root_dir=path,
-        checkpoint_callback=True,
-        max_epochs=config["num_epochs"],
-        plugins=DDPPlugin(find_unused_parameters=True),
-        num_sanity_val_steps=0,
-        resume_from_checkpoint=config["resume_path"],
-        check_val_every_n_epoch=10,
-    )
-    print("Starting the training")
-    trainer.fit(module, dm)
+    
+    if config["mode"] == "source_free":
+        print("Source-free mode: Skipping training, directly evaluating")
+    else:
+        path = os.path.join(config["working_dir"], config["datetime"])
+        trainer = pl.Trainer(
+            gpus=config["num_gpus"],
+            accelerator="ddp",
+            default_root_dir=path,
+            checkpoint_callback=True,
+            max_epochs=config["num_epochs"],
+            plugins=DDPPlugin(find_unused_parameters=True),
+            num_sanity_val_steps=0,
+            resume_from_checkpoint=config["resume_path"],
+            check_val_every_n_epoch=10,
+        )
+        print("Starting the training")
+        trainer.fit(module, dm)
 
     print("Training finished, now evaluating the results")
-    del trainer
+    # del trainer
     del dm
     del module
     gc.collect()
